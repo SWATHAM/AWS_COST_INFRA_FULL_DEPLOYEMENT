@@ -30,19 +30,17 @@ def test_estimate_ec2():
     assert "total_monthly" in response.json()
 
 
-def test_estimate_rds():
-    """RDS estimate — accept any non-500 response (schema may vary)."""
-    response = client.post("/estimate", json={})
-    assert response.status_code == 200
-    assert "total_monthly" in response.json()
-
-
-def test_empty_estimate():
+def test_estimate_empty_returns_zero():
     response = client.post("/estimate", json={})
     assert response.status_code == 200
     data = response.json()
-    assert "total_monthly" in data
     assert data["total_monthly"] == 0
+
+
+def test_estimate_annual_field_present():
+    response = client.post("/estimate", json={})
+    assert response.status_code == 200
+    assert "total_annual" in response.json()
 
 
 def test_cors_headers():
