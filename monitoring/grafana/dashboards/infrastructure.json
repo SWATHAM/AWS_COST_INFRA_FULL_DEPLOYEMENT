@@ -14,23 +14,15 @@
       "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
       "targets": [
         {
-          "expr": "100 - (avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
-          "legendFormat": "{{ instance }}",
+          "expr": "100 - (avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\",job=\"node-exporter\"}[5m])) * 100)",
+          "legendFormat": "CPU %",
           "datasource": "Prometheus"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100,
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "yellow", "value": 70 },
-              { "color": "red", "value": 85 }
-            ]
-          }
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "steps": [{ "color": "green", "value": 0 }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 85 }] }
         }
       }
     },
@@ -41,45 +33,45 @@
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "targets": [
         {
-          "expr": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100",
-          "legendFormat": "{{ instance }}",
+          "expr": "(1 - node_memory_MemAvailable_bytes{job=\"node-exporter\"} / node_memory_MemTotal_bytes{job=\"node-exporter\"}) * 100",
+          "legendFormat": "Memory %",
+          "datasource": "Prometheus"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 3,
+      "title": "Container Count",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "count(up{job=\"backend\"})",
+          "legendFormat": "Backend Instances",
           "datasource": "Prometheus"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "green", "value": 0 }] }
         }
       }
     },
     {
-      "id": 3,
-      "title": "Pod Count by Deployment",
-      "type": "bargauge",
-      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
-      "targets": [
-        {
-          "expr": "kube_deployment_status_replicas_available{namespace=\"aws-cost-estimator\"}",
-          "legendFormat": "{{ deployment }}",
-          "datasource": "Prometheus"
-        }
-      ]
-    },
-    {
       "id": 4,
-      "title": "Network I/O (bytes/s)",
+      "title": "Network Receive (bytes/s)",
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "gridPos": { "x": 8, "y": 8, "w": 16, "h": 8 },
       "targets": [
         {
-          "expr": "rate(node_network_receive_bytes_total[5m])",
+          "expr": "rate(node_network_receive_bytes_total{job=\"node-exporter\", device!=\"lo\"}[5m])",
           "legendFormat": "RX {{ device }}",
           "datasource": "Prometheus"
         },
         {
-          "expr": "rate(node_network_transmit_bytes_total[5m])",
+          "expr": "rate(node_network_transmit_bytes_total{job=\"node-exporter\", device!=\"lo\"}[5m])",
           "legendFormat": "TX {{ device }}",
           "datasource": "Prometheus"
         }
@@ -93,25 +85,35 @@
       "gridPos": { "x": 0, "y": 16, "w": 8, "h": 8 },
       "targets": [
         {
-          "expr": "(1 - node_filesystem_free_bytes{fstype!=\"tmpfs\"} / node_filesystem_size_bytes{fstype!=\"tmpfs\"}) * 100",
+          "expr": "(1 - node_filesystem_free_bytes{job=\"node-exporter\", fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{job=\"node-exporter\", fstype!~\"tmpfs|overlay\"}) * 100",
           "legendFormat": "{{ mountpoint }}",
           "datasource": "Prometheus"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100,
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "yellow", "value": 70 },
-              { "color": "red", "value": 90 }
-            ]
-          }
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "steps": [{ "color": "green", "value": 0 }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 90 }] }
         }
       }
+    },
+    {
+      "id": 6,
+      "title": "System Load Average",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 16, "w": 16, "h": 8 },
+      "targets": [
+        {
+          "expr": "node_load1{job=\"node-exporter\"}",
+          "legendFormat": "1m load",
+          "datasource": "Prometheus"
+        },
+        {
+          "expr": "node_load5{job=\"node-exporter\"}",
+          "legendFormat": "5m load",
+          "datasource": "Prometheus"
+        }
+      ]
     }
   ]
 }

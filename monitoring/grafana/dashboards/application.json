@@ -15,7 +15,7 @@
       "targets": [
         {
           "expr": "rate(http_requests_total{job=\"backend\"}[5m])",
-          "legendFormat": "{{ method }} {{ path }}",
+          "legendFormat": "{{ method }} {{ handler }}",
           "datasource": "Prometheus"
         }
       ]
@@ -27,23 +27,11 @@
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "targets": [
         {
-          "expr": "rate(http_requests_total{job=\"backend\",status=~\"5..\"}[5m]) / rate(http_requests_total{job=\"backend\"}[5m]) * 100",
+          "expr": "rate(http_requests_total{job=\"backend\", status_code=~\"5..\"}[5m]) / rate(http_requests_total{job=\"backend\"}[5m]) * 100",
           "legendFormat": "Error %",
           "datasource": "Prometheus"
         }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 5 }
-            ]
-          }
-        }
-      }
+      ]
     },
     {
       "id": 3,
@@ -66,35 +54,46 @@
     },
     {
       "id": 4,
-      "title": "Active Pods",
+      "title": "Total Requests",
       "type": "stat",
       "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 },
       "targets": [
         {
-          "expr": "kube_deployment_status_replicas_available{namespace=\"aws-cost-estimator\"}",
-          "legendFormat": "{{ deployment }}",
-          "datasource": "Prometheus"
-        }
-      ]
-    },
-    {
-      "id": 5,
-      "title": "Pod Restarts",
-      "type": "stat",
-      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 },
-      "targets": [
-        {
-          "expr": "sum(kube_pod_container_status_restarts_total{namespace=\"aws-cost-estimator\"})",
-          "legendFormat": "Restarts",
+          "expr": "sum(http_requests_total{job=\"backend\"})",
+          "legendFormat": "Total",
           "datasource": "Prometheus"
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "color": { "mode": "thresholds" },
           "thresholds": {
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "red", "value": 1 }
+              { "color": "green", "value": 0 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Backend Uptime",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 },
+      "targets": [
+        {
+          "expr": "time() - process_start_time_seconds{job=\"backend\"}",
+          "legendFormat": "Uptime",
+          "datasource": "Prometheus"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": 0 }
             ]
           }
         }

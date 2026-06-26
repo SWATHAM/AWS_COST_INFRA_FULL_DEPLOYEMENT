@@ -5,6 +5,8 @@ from typing import List, Optional
 import json
 
 app = FastAPI(title="AWS Cost Estimator API", version="1.0.0")
+from prometheus_fastapi_instrumentator import Instrumentator
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,

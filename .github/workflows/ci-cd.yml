@@ -186,12 +186,44 @@ jobs:
           echo "Frontend pods running: $FRONTEND"
           [ "$BACKEND" -ge 1 ] && [ "$FRONTEND" -ge 1 ] && echo "✅ Deploy verified" || exit 1
 
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "❌ Staging deploy failed — *${{ github.repository }}* on `${{ github.ref_name }}` (commit ${{ github.sha }}). <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            }
+
+      - name: Notify email on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ Staging deploy failed — ${{ github.repository }}"
+          to: swatha.2002238@srec.ac.in,swethamanoharan2001@gmail.com
+          from: AWS Cost Estimator CI/CD
+          body: |
+            Staging deploy failed for ${{ github.repository }} on branch ${{ github.ref_name }} (commit ${{ github.sha }}).
+            View the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
   # ── 4. Deploy to Production ───────────────────────────────────────────────
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
     needs: build-and-push
     if: github.ref == 'refs/heads/main'
+    # Manual approval gate: this job will PAUSE here and wait for approval
+    # before running, but only once the "production" Environment has a
+    # required reviewer configured in GitHub:
+    #   repo Settings -> Environments -> production -> Required reviewers
+    # Add yourself (or your reviewer) there. Without that setting, this
+    # line alone does NOT block the job — it just labels the run.
     environment: production
 
     steps:
@@ -260,3 +292,30 @@ jobs:
           kubectl rollout undo deployment/backend -n aws-cost-estimator || echo "Nothing to rollback for backend"
           kubectl rollout undo deployment/frontend -n aws-cost-estimator || echo "Nothing to rollback for frontend"
           echo "Rollback complete"
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "❌ Production deploy failed — *${{ github.repository }}* on `${{ github.ref_name }}` (commit ${{ github.sha }}). Rollback was attempted automatically. <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            }
+
+      - name: Notify email on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ Production deploy failed — ${{ github.repository }}"
+          to: swatha.2002238@srec.ac.in,swethamanoharan2001@gmail.com
+          from: AWS Cost Estimator CI/CD
+          body: |
+            Production deploy failed for ${{ github.repository }} on branch ${{ github.ref_name }} (commit ${{ github.sha }}).
+            An automatic rollback was attempted.
+            View the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
