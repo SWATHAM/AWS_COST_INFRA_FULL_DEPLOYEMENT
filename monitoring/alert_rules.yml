@@ -1,0 +1,64 @@
+groups:
+  - name: application_alerts
+    interval: 30s
+    rules:
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend service is down"
+          description: "Backend pod {{ $labels.pod }} has been unreachable for over 1 minute."
+
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{job="backend", status=~"5.."}[5m]) /
+          rate(http_requests_total{job="backend"}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP error rate on backend"
+          description: "Error rate is above 5% for the last 5 minutes."
+
+      - alert: HighResponseLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(http_request_duration_seconds_bucket{job="backend"}[5m])
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency on backend"
+          description: "95th percentile response time exceeds 2 seconds."
+
+  - name: infrastructure_alerts
+    rules:
+      - alert: NodeHighCPU
+        expr: |
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node CPU usage above 85%"
+
+      - alert: NodeHighMemory
+        expr: |
+          (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node memory usage above 85%"
+
+      - alert: PodCrashLooping
+        expr: |
+          rate(kube_pod_container_status_restarts_total{namespace="aws-cost-estimator"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod {{ $labels.pod }} is crash looping"

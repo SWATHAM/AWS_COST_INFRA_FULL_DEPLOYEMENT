@@ -1,0 +1,258 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: aws-cost-estimator-eks
+  ECR_BACKEND_REPO: aws-cost-estimator/backend
+  ECR_FRONTEND_REPO: aws-cost-estimator/frontend
+
+jobs:
+  # ── 1. Test ─────────────────────────────────────────────────────────────────
+  test-backend:
+    name: Test Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest httpx
+
+      - name: Run backend tests
+        run: pytest tests/ -v --tb=short
+
+  test-frontend:
+    name: Test Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test -- --watchAll=false --passWithNoTests
+
+      - name: Build frontend
+        run: npm run build
+
+  # ── 2. Build & Push Docker Images ───────────────────────────────────────────
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend]
+    if: github.event_name == 'push'
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate image tag
+        id: meta
+        run: echo "tag=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
+
+      - name: Build & push backend image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_BACKEND_REPO:$IMAGE_TAG \
+                       -t $ECR_REGISTRY/$ECR_BACKEND_REPO:latest \
+                       ./backend
+          docker push $ECR_REGISTRY/$ECR_BACKEND_REPO:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_BACKEND_REPO:latest
+
+      - name: Build & push frontend image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_FRONTEND_REPO:$IMAGE_TAG \
+                       -t $ECR_REGISTRY/$ECR_FRONTEND_REPO:latest \
+                       ./frontend
+          docker push $ECR_REGISTRY/$ECR_FRONTEND_REPO:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_FRONTEND_REPO:latest
+
+      - name: Scan images for vulnerabilities
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          aws ecr wait image-scan-complete \
+            --repository-name $ECR_BACKEND_REPO \
+            --image-id imageTag=$IMAGE_TAG \
+            --region $AWS_REGION || true
+
+  # ── 3. Deploy to Staging ─────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/staging'
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: v1.29.0
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get ECR registry
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create/update K8s secret
+        run: |
+          kubectl create secret generic app-secrets \
+            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            --namespace=aws-cost-estimator \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy to staging namespace
+        env:
+          ECR_BACKEND_URL: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_BACKEND_REPO }}
+          ECR_FRONTEND_URL: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_FRONTEND_REPO }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+        run: |
+          kubectl apply -f k8s/00-namespace.yaml
+          # Substitute image tags in manifests
+          envsubst < k8s/01-backend.yaml | kubectl apply -f -
+          envsubst < k8s/02-frontend.yaml | kubectl apply -f -
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/backend -n aws-cost-estimator --timeout=300s
+          kubectl rollout status deployment/frontend -n aws-cost-estimator --timeout=300s
+
+      - name: Run smoke tests against staging
+        run: |
+          INGRESS_URL=$(kubectl get ingress app-ingress -n aws-cost-estimator \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          sleep 30
+          curl -f http://$INGRESS_URL/health || exit 1
+          echo "✅ Staging smoke test passed"
+
+  # ── 4. Deploy to Production ───────────────────────────────────────────────
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    environment: production   # Requires manual approval in GitHub
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: v1.29.0
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get ECR registry
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create/update K8s secret
+        run: |
+          kubectl create secret generic app-secrets \
+            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            --namespace=aws-cost-estimator \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy to production
+        env:
+          ECR_BACKEND_URL: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_BACKEND_REPO }}
+          ECR_FRONTEND_URL: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_FRONTEND_REPO }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+        run: |
+          kubectl apply -f k8s/00-namespace.yaml
+          envsubst < k8s/01-backend.yaml | kubectl apply -f -
+          envsubst < k8s/02-frontend.yaml | kubectl apply -f -
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/backend -n aws-cost-estimator --timeout=300s
+          kubectl rollout status deployment/frontend -n aws-cost-estimator --timeout=300s
+
+      - name: Production smoke test
+        run: |
+          INGRESS_URL=$(kubectl get ingress app-ingress -n aws-cost-estimator \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          sleep 30
+          curl -f http://$INGRESS_URL/health || exit 1
+          echo "✅ Production deploy successful - $(date)"
+
+      - name: Notify on failure (rollback)
+        if: failure()
+        run: |
+          echo "❌ Deploy failed — initiating rollback"
+          kubectl rollout undo deployment/backend -n aws-cost-estimator
+          kubectl rollout undo deployment/frontend -n aws-cost-estimator
+          kubectl rollout status deployment/backend -n aws-cost-estimator --timeout=120s
+          echo "Rollback complete"
