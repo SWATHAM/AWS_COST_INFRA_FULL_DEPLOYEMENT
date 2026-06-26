@@ -174,7 +174,7 @@ jobs:
       - name: Wait for rollout
         run: |
           kubectl rollout status deployment/backend -n aws-cost-estimator --timeout=300s
-          kubectl rollout status deployment/frontend -n aws-cost-estimator --timeout=300s
+          kubectl rollout status deployment/frontend -n aws-cost-estimator --timeout=600s
 
       - name: Run smoke tests against staging
         run: |
@@ -239,7 +239,7 @@ jobs:
       - name: Wait for rollout
         run: |
           kubectl rollout status deployment/backend -n aws-cost-estimator --timeout=300s
-          kubectl rollout status deployment/frontend -n aws-cost-estimator --timeout=300s
+          kubectl rollout status deployment/frontend -n aws-cost-estimator --timeout=600s
 
       - name: Production smoke test
         run: |
